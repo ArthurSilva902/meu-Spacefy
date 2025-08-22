@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: spacefy-backend
+    env: node
+    rootDir: Spacefy/backend
+    plan: free
+    autoDeploy: true
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /test
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Defina FRONTEND_URL no painel do Render ou substitua o value abaixo
+      # pelo seu domínio do frontend (ex.: https://meu-spacefy.vercel.app)
+      - key: FRONTEND_URL
+        value: https://meu-spacefy.vercel.app
+      # As variáveis sensíveis (MONGO_URI, JWT_KEY, etc.) devem ser
+      # configuradas no painel do Render por segurança.
+
