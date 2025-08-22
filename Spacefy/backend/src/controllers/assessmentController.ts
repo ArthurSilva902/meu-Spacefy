@@ -4,8 +4,9 @@ import mongoose from "mongoose";
 import { IBaseUser } from "../types/user";
 import redisConfig from "../config/redisConfig";
 import RentalModel from "../models/rentalModel";
+import SpaceModel from "../models/spaceModel";
 
-// Registrar uma avaliação
+// Registrar uma avaliação (função existente atualizada)
 export const createAssessment = async (req: Request, res: Response) => {
   try {
     // Garante que o usuário está autenticado
@@ -14,7 +15,7 @@ export const createAssessment = async (req: Request, res: Response) => {
       return;
     }
 
-    const { spaceID, userID, score, comment } = req.body || {};
+    const { spaceID, userID, score, comment, evaluationType = 'user_to_user' } = req.body || {};
 
     // Verificação de campos obrigatórios
     if (!spaceID || !userID || score === undefined) {
@@ -25,8 +26,8 @@ export const createAssessment = async (req: Request, res: Response) => {
     }
 
     // Validação da nota
-    if (score < 0 || score > 5) {
-      res.status(400).json({ error: "A nota deve ser entre 0 e 5 estrelas." });
+    if (score < 1 || score > 5 || !Number.isInteger(score)) {
+      res.status(400).json({ error: "A nota deve ser um número inteiro entre 1 e 5 estrelas." });
       return;
     }
 
@@ -55,26 +56,27 @@ export const createAssessment = async (req: Request, res: Response) => {
       return;
     }
 
-    // Se o avaliado for usuário comum, só locatários podem avaliar
-    if (evaluatedUser.role !== "locatario") {
-      if (req.auth.role !== "locatario") {
-        res.status(403).json({ error: "Apenas locatários podem avaliar usuários comuns." });
+    // Verificar se o usuário tem permissão para avaliar
+    if (evaluationType === 'owner_to_tenant') {
+      // Verificar se o usuário é realmente o proprietário do espaço
+      const space = await SpaceModel.findById(spaceID);
+      if (!space || space.owner.toString() !== req.auth.id) {
+        res.status(403).json({ error: "Apenas o proprietário do espaço pode avaliar o locatário." });
         return;
       }
     }
-    // Se o avaliado for locatário, qualquer locatário pode avaliar (inclusive outros locatários)
-    // Se quiser permitir que usuários comuns avaliem locatários, remova o if acima
 
     // Verificar se já existe uma avaliação desse avaliador para esse usuário e espaço
     const existingReview = await Review.findOne({
       userID: new mongoose.Types.ObjectId(userID),
       spaceID: new mongoose.Types.ObjectId(spaceID),
       createdBy: req.auth.id,
+      evaluationType: evaluationType
     });
 
     if (existingReview) {
       res.status(400).json({
-        error: "Você já avaliou este usuário para este espaço.",
+        error: "Você já avaliou este usuário para este espaço com este tipo de avaliação.",
       });
       return;
     }
@@ -87,6 +89,8 @@ export const createAssessment = async (req: Request, res: Response) => {
       comment,
       evaluation_date: new Date(),
       createdBy: req.auth.id,
+      evaluationType: evaluationType,
+      isOwnerEvaluation: evaluationType === 'owner_to_tenant'
     });
 
     // Invalida os caches relacionados
@@ -95,24 +99,232 @@ export const createAssessment = async (req: Request, res: Response) => {
       redisConfig.deleteRedis(`assessments_user_${userID}`),
       redisConfig.deleteRedis(`average_score_${spaceID}`),
       redisConfig.deleteRedisPattern("top_rated_spaces_*"),
+      redisConfig.deleteRedis(`user_rating_${userID}`),
+      redisConfig.deleteRedisPattern(`assessments_${evaluationType}_*`)
     ]);
 
     res.status(201).json(review);
     return;
-  } catch (error: any) {
+  } catch (error) {
     console.error("Erro ao criar avaliação:", error);
+    res.status(500).json({ error: "Erro interno ao criar avaliação." });
+    return;
+  }
+};
 
-    if (error.code === 11000) {
-      res.status(400).json({
-        error: "Erro de duplicação. Detalhes: " + error.message
-      });
+// NOVA FUNÇÃO: Proprietário avalia locatário
+export const createOwnerAssessment = async (req: Request, res: Response) => {
+  try {
+    // Garante que o usuário está autenticado
+    if (!req.auth || !req.auth.id) {
+      res.status(401).json({ error: "Usuário não autenticado." });
       return;
     }
 
-    res.status(500).json({
-      error: "Erro ao criar avaliação.",
-      details: error.message
+    const { rentalID, score, comment } = req.body || {};
+
+    // Verificação de campos obrigatórios
+    if (!rentalID || score === undefined) {
+      res.status(400).json({ error: "Campos obrigatórios: rentalID e score." });
+      return;
+    }
+
+    // Validação da nota
+    if (score < 1 || score > 5 || !Number.isInteger(score)) {
+      res.status(400).json({ error: "A nota deve ser um número inteiro entre 1 e 5 estrelas." });
+      return;
+    }
+
+    // Validar se o rentalID é válido
+    if (!mongoose.Types.ObjectId.isValid(rentalID)) {
+      res.status(400).json({ error: "ID do aluguel inválido." });
+      return;
+    }
+
+    // Buscar o aluguel
+    const rental = await RentalModel.findById(rentalID).populate('space');
+    if (!rental) {
+      res.status(404).json({ error: "Aluguel não encontrado." });
+      return;
+    }
+
+    // Verificar se o usuário é o proprietário do espaço
+    if (rental.owner.toString() !== req.auth.id) {
+      res.status(403).json({ error: "Apenas o proprietário do espaço pode avaliar o locatário." });
+      return;
+    }
+
+    // Verificar se o aluguel já foi concluído (data de fim já passou)
+    if (new Date() < rental.end_date) {
+      res.status(400).json({ error: "Só é possível avaliar após o aluguel ser concluído." });
+      return;
+    }
+
+    // Verificar se já existe uma avaliação do proprietário para este aluguel
+    const existingAssessment = await Review.findOne({
+      rentalID: new mongoose.Types.ObjectId(rentalID),
+      createdBy: req.auth.id,
+      evaluationType: 'owner_to_tenant'
     });
+
+    if (existingAssessment) {
+      res.status(400).json({ error: "Você já avaliou este locatário para este aluguel." });
+      return;
+    }
+
+    // Criar a avaliação do proprietário para o locatário
+    const assessment = await Review.create({
+      spaceID: rental.space,
+      userID: rental.user, // Locatário
+      score,
+      comment,
+      evaluation_date: new Date(),
+      createdBy: req.auth.id, // Proprietário
+      evaluationType: 'owner_to_tenant',
+      isOwnerEvaluation: true,
+      rentalID: new mongoose.Types.ObjectId(rentalID)
+    });
+
+    // Invalida os caches relacionados
+    await Promise.all([
+      redisConfig.deleteRedis(`assessments_space_${rental.space}`),
+      redisConfig.deleteRedis(`assessments_user_${rental.user}`),
+      redisConfig.deleteRedis(`user_rating_${rental.user}`),
+      redisConfig.deleteRedisPattern(`assessments_owner_to_tenant_*`)
+    ]);
+
+    res.status(201).json({
+      message: "Avaliação do proprietário criada com sucesso!",
+      assessment
+    });
+    return;
+  } catch (error) {
+    console.error("Erro ao criar avaliação do proprietário:", error);
+    res.status(500).json({ error: "Erro interno ao criar avaliação." });
+    return;
+  }
+};
+
+// NOVA FUNÇÃO: Obter avaliações de um usuário (incluindo avaliações de proprietários)
+export const getUserAssessments = async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const { evaluationType, page = 1, limit = 10 } = req.query;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      res.status(400).json({ error: "ID de usuário inválido." });
+      return;
+    }
+
+    // Tenta obter os dados do cache
+    const cacheKey = `user_assessments_${userId}_${evaluationType || 'all'}_page_${page}_limit_${limit}`;
+    const cachedAssessments = await redisConfig.getRedis(cacheKey);
+    
+    if (cachedAssessments) {
+      res.status(200).json(JSON.parse(cachedAssessments));
+      return;
+    }
+
+    // Construir filtro
+    const filter: any = { userID: userId };
+    if (evaluationType) {
+      filter.evaluationType = evaluationType;
+    }
+
+    // Paginação
+    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    const total = await Review.countDocuments(filter);
+    const totalPages = Math.ceil(total / parseInt(limit as string));
+
+    const assessments = await Review.find(filter)
+      .populate('createdBy', 'name surname profilePhoto')
+      .populate('spaceID', 'space_name location')
+      .sort({ evaluation_date: -1 })
+      .skip(skip)
+      .limit(parseInt(limit as string));
+
+    const response = {
+      assessments,
+      pagination: {
+        currentPage: parseInt(page as string),
+        totalPages,
+        total,
+        hasNextPage: parseInt(page as string) < totalPages,
+        hasPreviousPage: parseInt(page as string) > 1
+      }
+    };
+
+    // Cache por 5 minutos
+    await redisConfig.setRedis(cacheKey, JSON.stringify(response), 300);
+
+    res.status(200).json(response);
+    return;
+  } catch (error) {
+    console.error("Erro ao buscar avaliações do usuário:", error);
+    res.status(500).json({ error: "Erro interno ao buscar avaliações." });
+    return;
+  }
+};
+
+// NOVA FUNÇÃO: Obter rating médio de um usuário
+export const getUserRating = async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      res.status(400).json({ error: "ID de usuário inválido." });
+      return;
+    }
+
+    // Tenta obter os dados do cache
+    const cacheKey = `user_rating_${userId}`;
+    const cachedRating = await redisConfig.getRedis(cacheKey);
+    
+    if (cachedRating) {
+      res.status(200).json(JSON.parse(cachedRating));
+      return;
+    }
+
+    // Calcular rating médio
+    const result = await Review.aggregate([
+      { $match: { userID: new mongoose.Types.ObjectId(userId) } },
+      {
+        $group: {
+          _id: null,
+          averageScore: { $avg: "$score" },
+          totalAssessments: { $sum: 1 },
+          scoreDistribution: {
+            $push: "$score"
+          }
+        }
+      }
+    ]);
+
+    let rating = {
+      averageScore: 0,
+      totalAssessments: 0,
+      scoreDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+    };
+
+    if (result.length > 0) {
+      const data = result[0];
+      rating.averageScore = Math.round(data.averageScore * 10) / 10; // Arredonda para 1 casa decimal
+      rating.totalAssessments = data.totalAssessments;
+      
+      // Calcular distribuição de notas
+      data.scoreDistribution.forEach((score: number) => {
+        rating.scoreDistribution[score as keyof typeof rating.scoreDistribution]++;
+      });
+    }
+
+    // Cache por 10 minutos
+    await redisConfig.setRedis(cacheKey, JSON.stringify(rating), 600);
+
+    res.status(200).json(rating);
+    return;
+  } catch (error) {
+    console.error("Erro ao calcular rating do usuário:", error);
+    res.status(500).json({ error: "Erro interno ao calcular rating." });
     return;
   }
 };
