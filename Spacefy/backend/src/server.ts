@@ -34,7 +34,7 @@ const limiter = rateLimit({
 
 // Configuração do CORS
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:8081' || 'http://localhost:5173', // URL do frontend
+  origin: process.env.FRONTEND_URL || 'http://localhost:8081' || 'http://localhost:5173' || 'https://meu-spacefy.vercel.app', // URL do frontend
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
@@ -47,6 +47,25 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 app.use(limiter); // Aplicar rate limiting globalmente
+
+// Rota raiz para teste
+app.get("/", (req, res) => {
+  res.json({ 
+    message: "Spacefy Backend API funcionando! 🚀",
+    status: "online",
+    timestamp: new Date().toISOString(),
+    version: "1.0.0"
+  });
+});
+
+// Rota de teste para verificar se está funcionando
+app.get("/test", (req, res) => {
+  res.json({ 
+    message: "Teste de conexão bem-sucedido! ✅",
+    status: "online",
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Rotas
 app.use("/users", userRouter);
