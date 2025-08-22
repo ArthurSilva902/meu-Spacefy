@@ -60,7 +60,7 @@ export const createAssessment = async (req: Request, res: Response) => {
     if (evaluationType === 'owner_to_tenant') {
       // Verificar se o usuário é realmente o proprietário do espaço
       const space = await SpaceModel.findById(spaceID);
-      if (!space || space.owner.toString() !== req.auth.id) {
+      if (!space || space.owner_id.toString() !== req.auth.id) {
         res.status(403).json({ error: "Apenas o proprietário do espaço pode avaliar o locatário." });
         return;
       }

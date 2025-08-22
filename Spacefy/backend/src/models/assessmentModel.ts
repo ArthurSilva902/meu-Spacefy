@@ -89,12 +89,12 @@ assessmentSchema.pre('save', async function(next) {
 
     if (existingAssessment) {
       const error = new Error('Você já avaliou este aluguel com este tipo de avaliação');
-      return next(error);
+      return next(error as any);
     }
 
     next();
   } catch (error) {
-    next(error);
+    next(error as any);
   }
 });
 
