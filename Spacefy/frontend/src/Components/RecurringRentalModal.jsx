@@ -40,8 +40,19 @@ const RecurringRentalModal = ({ isOpen, onClose, space, onSuccess }) => {
     // Calcular número de instâncias recorrentes
     if (formData.isRecurring && formData.recurringEndDate) {
       const recurringEnd = new Date(formData.recurringEndDate);
-      const weeks = Math.ceil((recurringEnd - startDate) / (1000 * 60 * 60 * 24 * 7));
-      return baseValue * weeks;
+      const start = new Date(formData.start_date);
+      
+      let instances = 1; // Primeira instância
+      
+      if (formData.recurringType === 'weekly') {
+        const weeks = Math.ceil((recurringEnd - start) / (1000 * 60 * 60 * 24 * 7));
+        instances = weeks;
+      } else if (formData.recurringType === 'monthly') {
+        const months = Math.ceil((recurringEnd - start) / (1000 * 60 * 60 * 24 * 30));
+        instances = months;
+      }
+      
+      return baseValue * instances;
     }
     
     return baseValue;

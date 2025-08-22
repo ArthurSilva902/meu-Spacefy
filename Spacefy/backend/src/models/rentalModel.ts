@@ -15,6 +15,8 @@ export interface IRental extends Document {
   recurringEndDate?: Date;
   parentRentalId?: Types.ObjectId;
   recurringInstances?: Types.ObjectId[];
+  // Campo para referência ao aluguel (usado em avaliações)
+  rentalID?: Types.ObjectId;
 }
 
 const rentalSchema = new Schema<IRental>(
@@ -118,12 +120,25 @@ const rentalSchema = new Schema<IRental>(
     recurringInstances: [{
       type: Schema.Types.ObjectId,
       ref: "Rental"
-    }]
+    }],
+    // Campo para referência ao próprio aluguel (usado em avaliações)
+    rentalID: {
+      type: Schema.Types.ObjectId,
+      ref: "Rental"
+    }
   },
   {
     timestamps: true
   }
 );
+
+// Middleware para definir o rentalID automaticamente
+rentalSchema.pre('save', function(next) {
+  if (!this.rentalID) {
+    this.rentalID = this._id;
+  }
+  next();
+});
 
 // Índices para melhorar a performance das consultas
 rentalSchema.index({ space: 1, start_date: 1, end_date: 1 });
@@ -131,6 +146,7 @@ rentalSchema.index({ user: 1 });
 rentalSchema.index({ start_date: 1, end_date: 1 });
 rentalSchema.index({ isRecurring: 1 });
 rentalSchema.index({ parentRentalId: 1 });
+rentalSchema.index({ rentalID: 1 });
 
 const RentalModel = mongoose.model<IRental>("Rental", rentalSchema);
 

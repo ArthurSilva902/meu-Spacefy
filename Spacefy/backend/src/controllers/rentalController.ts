@@ -168,6 +168,10 @@ export const createRental = async (req: Request, res: Response) => {
     });
 
     await rental.save();
+    
+    // Definir o rentalID após salvar
+    rental.rentalID = rental._id;
+    await rental.save();
 
     // Invalida todos os caches relacionados a aluguéis
     await Promise.all([
@@ -555,6 +559,10 @@ export const createRecurringRental = async (req: Request, res: Response) => {
     });
 
     await parentRental.save();
+    
+    // Definir o rentalID após salvar
+    parentRental.rentalID = parentRental._id;
+    await parentRental.save();
 
     // Criar todas as instâncias recorrentes
     const recurringInstances = [];
@@ -576,6 +584,11 @@ export const createRecurringRental = async (req: Request, res: Response) => {
       });
 
       await recurringRental.save();
+      
+      // Definir o rentalID após salvar
+      recurringRental.rentalID = recurringRental._id;
+      await recurringRental.save();
+      
       recurringInstances.push(recurringRental._id);
     }
 
