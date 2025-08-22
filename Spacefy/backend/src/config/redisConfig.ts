@@ -12,11 +12,13 @@ let redisClient: Redis | null = null;
 
 if (redisUrl && redisToken) {
   try {
-    // Conecta ao Redis Upstash
-    redisClient = new Redis(redisUrl, {
+    // Conecta ao Redis Upstash usando formato correto
+    const url = new URL(redisUrl);
+    redisClient = new Redis({
+      host: url.hostname,
+      port: parseInt(url.port) || 6379,
       password: redisToken,
-      retryDelayOnFailover: 100,
-      maxRetriesPerRequest: 3,
+      lazyConnect: true,
     });
     
     console.log('✅ Redis conectado com sucesso!');
@@ -73,10 +75,6 @@ async function deleteRedisPattern(pattern: string) {
     console.log('Erro ao deletar padrão do Redis:', error);
     return 0;
   }
-}
-
-export default { redisClient, getRedis, setRedis, deleteRedis, deleteRedisPattern };
-  return 0;
 }
 
 export default { redisClient, getRedis, setRedis, deleteRedis, deleteRedisPattern };
