@@ -6,6 +6,8 @@ import {
   deleteRental,
   getRentedDatesBySpace,
   getRentalsByOwner,
+  createRecurringRental,
+  cancelRecurringRental,
 } from "../controllers/rentalController";
 import { validateAndGetTokenData } from "../middlewares/token";
 
@@ -13,10 +15,12 @@ const router = express.Router();
 
 // Todas as rotas agora requerem autenticação
 router.post("/", validateAndGetTokenData, createRental);
+router.post("/recurring", validateAndGetTokenData, createRecurringRental);
 router.get("/", validateAndGetTokenData, getAllRentals);
 router.get("/user/:userId", validateAndGetTokenData, getRentalsByUser);
 router.get("/owner/:ownerId", getRentalsByOwner);
 router.get("/space/:spaceId/dates", getRentedDatesBySpace);
 router.delete("/:rentalId", validateAndGetTokenData, deleteRental);
+router.delete("/recurring/:rentalId", validateAndGetTokenData, cancelRecurringRental);
 
 export default router;

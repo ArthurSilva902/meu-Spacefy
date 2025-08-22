@@ -16,6 +16,7 @@ import assessmentRoutes from "./routes/assessmentRoutes";
 import notificationRoutes from "./routes/notificationRoutes";
 import blockedDatesRouter from "./routes/blockedDatesRoutes";
 import openaiRoutes from "./routes/openaiRoutes";
+import adminRoutes from "./routes/adminRoutes";
 
 dotenv.config();
 
@@ -78,6 +79,7 @@ app.use("/assessment", assessmentRoutes);
 app.use("/notifications", notificationRoutes);
 app.use("/blocked-dates", blockedDatesRouter);
 app.use("/openai", openaiRoutes);
+app.use("/admin", adminRoutes);
 
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI;

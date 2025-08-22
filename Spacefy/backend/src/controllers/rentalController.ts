@@ -5,6 +5,7 @@ import SpaceModel from "../models/spaceModel";
 import UserModel from "../models/userModel";
 import mongoose from "mongoose";
 import redisConfig from "../config/redisConfig";
+import { generateRecurringDates, validateRecurringDates } from "../utils/recurringUtils";
 
 // Função para calcular o número de dias entre duas datas
 const calculateDays = (startDate: Date, endDate: Date): number => {
@@ -430,6 +431,253 @@ export const getRentalsByOwner = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Erro ao buscar aluguéis do locador:", error);
     res.status(500).json({ error: "Erro interno ao buscar aluguéis." });
+    return;
+  }
+};
+
+// Criar reserva recorrente (semanal ou mensal)
+export const createRecurringRental = async (req: Request, res: Response) => {
+  try {
+    const { 
+      userId, 
+      spaceId, 
+      start_date, 
+      end_date, 
+      startTime, 
+      endTime, 
+      value,
+      isRecurring,
+      recurringType,
+      recurringEndDate
+    } = req.body;
+
+    if (!userId || !spaceId || !start_date || !end_date || !startTime || !endTime || !value) {
+      res.status(400).json({ error: "Todos os campos são obrigatórios." });
+      return;
+    }
+
+    if (!isRecurring || !recurringType || !recurringEndDate) {
+      res.status(400).json({ error: "Para reservas recorrentes, isRecurring, recurringType e recurringEndDate são obrigatórios." });
+      return;
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(userId) || !mongoose.Types.ObjectId.isValid(spaceId)) {
+      res.status(400).json({ error: "ID inválido." });
+      return;
+    }
+
+    // Buscar o espaço para obter o ID do locador
+    const space = await SpaceModel.findById(spaceId).select("owner_id space_name");
+    if (!space) {
+      res.status(404).json({ error: "Espaço não encontrado." });
+      return;
+    }
+
+    // Verificar se o usuário existe
+    const user = await UserModel.findById(userId).select("name");
+    if (!user) {
+      res.status(404).json({ error: "Usuário não encontrado." });
+      return;
+    }
+
+    const convertedStartDate = convertDate(start_date);
+    const convertedEndDate = convertDate(end_date);
+    const convertedRecurringEndDate = convertDate(recurringEndDate);
+
+    // Validar datas da recorrência
+    const validation = validateRecurringDates(
+      convertedStartDate,
+      convertedEndDate,
+      recurringType,
+      convertedRecurringEndDate,
+      spaceId
+    );
+
+    if (!validation.isValid) {
+      res.status(400).json({ error: validation.message });
+      return;
+    }
+
+    // Gerar todas as datas da recorrência
+    const recurringDates = generateRecurringDates(
+      convertedStartDate,
+      convertedEndDate,
+      recurringType,
+      convertedRecurringEndDate
+    );
+
+    // Verificar conflitos para todas as datas
+    for (const dateRange of recurringDates) {
+      const rentalsOnSameSpace = await RentalModel.find({
+        space: spaceId,
+        $or: [
+          {
+            start_date: { $lte: dateRange.end },
+            end_date: { $gte: dateRange.start },
+          },
+        ],
+      });
+
+      for (const rental of rentalsOnSameSpace) {
+        if (
+          hasTimeConflict(
+            rental.start_date,
+            rental.end_date,
+            rental.startTime,
+            rental.endTime,
+            dateRange.start,
+            dateRange.end,
+            startTime,
+            endTime
+          )
+        ) {
+          res.status(409).json({
+            error: `Conflito de horário: já existe um aluguel nesse espaço no período de ${dateRange.start.toLocaleDateString()} até ${dateRange.end.toLocaleDateString()}.`,
+          });
+          return;
+        }
+      }
+    }
+
+    // Criar a reserva pai (primeira reserva)
+    const parentRental = new RentalModel({
+      user: userId,
+      space: spaceId,
+      owner: space.owner_id,
+      start_date: convertedStartDate,
+      end_date: convertedEndDate,
+      startTime,
+      endTime,
+      value,
+      isRecurring: true,
+      recurringType,
+      recurringEndDate: convertedRecurringEndDate
+    });
+
+    await parentRental.save();
+
+    // Criar todas as instâncias recorrentes
+    const recurringInstances = [];
+    for (let i = 1; i < recurringDates.length; i++) {
+      const dateRange = recurringDates[i];
+      const recurringRental = new RentalModel({
+        user: userId,
+        space: spaceId,
+        owner: space.owner_id,
+        start_date: dateRange.start,
+        end_date: dateRange.end,
+        startTime,
+        endTime,
+        value,
+        isRecurring: true,
+        recurringType,
+        recurringEndDate: convertedRecurringEndDate,
+        parentRentalId: parentRental._id
+      });
+
+      await recurringRental.save();
+      recurringInstances.push(recurringRental._id);
+    }
+
+    // Atualizar a reserva pai com os IDs das instâncias
+    parentRental.recurringInstances = recurringInstances;
+    await parentRental.save();
+
+    // Invalida todos os caches relacionados a aluguéis
+    await Promise.all([
+      redisConfig.deleteRedisPattern('rentals_all_*'),
+      redisConfig.deleteRedisPattern(`rentals_user_${userId}_*`),
+      redisConfig.deleteRedisPattern(`rentals_owner_${space.owner_id}_*`),
+      redisConfig.deleteRedisPattern(`rentals_space_${spaceId}_*`),
+      redisConfig.deleteRedisPattern(`rented_dates_${spaceId}_*`)
+    ]);
+
+    const spaceName = space.space_name || "espaço";
+    const userName = user.name || "Usuário";
+
+    // Criar notificação para o usuário que alugou
+    await NotificationModel.create({
+      user: userId,
+      title: "Reserva recorrente criada com sucesso",
+      message: `Sua reserva recorrente para o espaço "${spaceName}" foi criada com sucesso. Total de ${recurringDates.length} reservas criadas.`,
+    });
+
+    // Criar notificação para o locador
+    await NotificationModel.create({
+      user: space.owner_id,
+      title: "Nova reserva recorrente do seu espaço",
+      message: `${userName} criou uma reserva recorrente no seu espaço "${spaceName}" com ${recurringDates.length} reservas.`,
+    });
+
+    res.status(201).json({
+      parentRental,
+      totalInstances: recurringDates.length,
+      message: `Reserva recorrente criada com ${recurringDates.length} instâncias`
+    });
+    return;
+  } catch (error) {
+    console.error("Erro detalhado ao criar reserva recorrente:", error);
+    res.status(500).json({ 
+      error: "Erro interno ao criar reserva recorrente.",
+      details: error instanceof Error ? error.message : "Erro desconhecido"
+    });
+    return;
+  }
+};
+
+// Cancelar reserva recorrente (cancela todas as instâncias)
+export const cancelRecurringRental = async (req: Request, res: Response) => {
+  try {
+    const { rentalId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(rentalId)) {
+      res.status(400).json({ error: "ID de aluguel inválido." });
+      return;
+    }
+
+    const rental = await RentalModel.findById(rentalId);
+    if (!rental) {
+      res.status(404).json({ error: "Aluguel não encontrado." });
+      return;
+    }
+
+    if (!rental.isRecurring) {
+      res.status(400).json({ error: "Este aluguel não é recorrente." });
+      return;
+    }
+
+    // Se for uma instância filha, buscar a reserva pai
+    let parentRental = rental;
+    if (rental.parentRentalId) {
+      parentRental = await RentalModel.findById(rental.parentRentalId);
+      if (!parentRental) {
+        res.status(404).json({ error: "Reserva pai não encontrada." });
+        return;
+      }
+    }
+
+    // Deletar todas as instâncias da recorrência
+    const instancesToDelete = [parentRental._id, ...(parentRental.recurringInstances || [])];
+    
+    await RentalModel.deleteMany({ _id: { $in: instancesToDelete } });
+
+    // Invalida todos os caches relacionados
+    await Promise.all([
+      redisConfig.deleteRedisPattern('rentals_all_*'),
+      redisConfig.deleteRedisPattern(`rentals_user_${parentRental.user}_*`),
+      redisConfig.deleteRedisPattern(`rentals_owner_${parentRental.owner}_*`),
+      redisConfig.deleteRedisPattern(`rentals_space_${parentRental.space}_*`),
+      redisConfig.deleteRedisPattern(`rented_dates_${parentRental.space}_*`)
+    ]);
+
+    res.status(200).json({ 
+      message: "Reserva recorrente cancelada com sucesso",
+      deletedInstances: instancesToDelete.length
+    });
+    return;
+  } catch (error) {
+    console.error("Erro ao cancelar reserva recorrente:", error);
+    res.status(500).json({ error: "Erro interno ao cancelar reserva recorrente." });
     return;
   }
 };

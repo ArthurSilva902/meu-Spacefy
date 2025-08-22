@@ -12,4 +12,11 @@ export interface IRental {
   value: number;             // valor total do aluguel
   createdAt?: Date;          // data de criação do registro
   updatedAt?: Date;          // data da última atualização
+  
+  // Novos campos para reservas recorrentes
+  isRecurring?: boolean;     // se é uma reserva recorrente
+  recurringType?: 'weekly' | 'monthly'; // tipo de recorrência
+  recurringEndDate?: Date;   // data final da recorrência
+  parentRentalId?: Types.ObjectId; // ID da reserva pai (para reservas recorrentes)
+  recurringInstances?: Types.ObjectId[]; // IDs das instâncias recorrentes criadas
 }

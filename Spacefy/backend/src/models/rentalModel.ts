@@ -9,6 +9,12 @@ export interface IRental extends Document {
   startTime: string;
   endTime: string;
   value: number;
+  // Novos campos para reservas recorrentes
+  isRecurring?: boolean;
+  recurringType?: 'weekly' | 'monthly';
+  recurringEndDate?: Date;
+  parentRentalId?: Types.ObjectId;
+  recurringInstances?: Types.ObjectId[];
 }
 
 const rentalSchema = new Schema<IRental>(
@@ -77,7 +83,42 @@ const rentalSchema = new Schema<IRental>(
         },
         message: "O valor deve ser um número positivo"
       }
-    }
+    },
+    // Novos campos para reservas recorrentes
+    isRecurring: {
+      type: Boolean,
+      default: false
+    },
+    recurringType: {
+      type: String,
+      enum: ['weekly', 'monthly'],
+      required: function(this: IRental) {
+        return this.isRecurring === true;
+      }
+    },
+    recurringEndDate: {
+      type: Date,
+      required: function(this: IRental) {
+        return this.isRecurring === true;
+      },
+      validate: {
+        validator: function(this: IRental, value: Date) {
+          if (this.isRecurring && value) {
+            return value > this.end_date;
+          }
+          return true;
+        },
+        message: "A data final da recorrência deve ser posterior à data de término da primeira reserva"
+      }
+    },
+    parentRentalId: {
+      type: Schema.Types.ObjectId,
+      ref: "Rental"
+    },
+    recurringInstances: [{
+      type: Schema.Types.ObjectId,
+      ref: "Rental"
+    }]
   },
   {
     timestamps: true
@@ -88,6 +129,8 @@ const rentalSchema = new Schema<IRental>(
 rentalSchema.index({ space: 1, start_date: 1, end_date: 1 });
 rentalSchema.index({ user: 1 });
 rentalSchema.index({ start_date: 1, end_date: 1 });
+rentalSchema.index({ isRecurring: 1 });
+rentalSchema.index({ parentRentalId: 1 });
 
 const RentalModel = mongoose.model<IRental>("Rental", rentalSchema);
 

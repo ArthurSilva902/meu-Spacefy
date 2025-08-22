@@ -16,6 +16,7 @@ import ProtectedRoute from '../Components/ProtectedRoute'
 import { ChatProvider } from '../Contexts/ChatContext'
 import Perfil_Locatario from '../Pages/Perfil_Locador/Perfil_Locador'
 import ProprietarioAvaliacoes from '../Pages/Avaliacoes/ProprietarioAvaliacoes'
+import AdminDashboard from '../Pages/Admin/AdminDashboard'
 
 const AppRoutes = () => {
   return (
@@ -35,6 +36,7 @@ const AppRoutes = () => {
           <Route path="/reservas" element={<ProtectedRoute><Reservas /></ProtectedRoute>} />
           <Route path="/perfil_locador/:id" element={<Perfil_Locatario />} />
           <Route path="/avaliacoes" element={<ProtectedRoute><ProprietarioAvaliacoes /></ProtectedRoute>} />
+          <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </ChatProvider>
